@@ -3,16 +3,19 @@ import json
 import pickle
 from contextlib import contextmanager
 
+from prometheus_client import REGISTRY, generate_latest
+from prometheus_client.core import GaugeMetricFamily
+
+from airflow.models import DagModel, DagRun, TaskFail, TaskInstance
 from airflow.configuration import conf
 from airflow.models import DagModel, DagRun, TaskInstance, TaskFail, XCom
 from airflow.plugins_manager import AirflowPlugin
 from airflow.settings import RBAC, Session
+from airflow.utils import timezone
 from airflow.utils.state import State
 from airflow.utils.log.logging_mixin import LoggingMixin
 from flask import Response
 from flask_admin import BaseView, expose
-from prometheus_client import generate_latest, REGISTRY
-from prometheus_client.core import GaugeMetricFamily
 from sqlalchemy import and_, func
 
 from airflow_prometheus_exporter.xcom_config import load_xcom_config
@@ -42,10 +45,9 @@ def get_dag_state_info():
                 DagRun.dag_id,
                 DagRun.state,
                 func.count(DagRun.state).label("count"),
-            )
-            .group_by(DagRun.dag_id, DagRun.state)
-            .subquery()
-        )
+        ).group_by(DagRun.dag_id, DagRun.state).subquery()
+
+)
         return (
             session.query(
                 dag_status_query.c.dag_id,
@@ -90,13 +92,13 @@ def get_dag_duration_info():
                 func.min(TaskInstance.start_date).label("start_date"),
             )
             .join(
-                TaskInstance,
-                and_(
-                    TaskInstance.dag_id == max_execution_dt_query.c.dag_id,
-                    (
-                        TaskInstance.execution_date
-                        == max_execution_dt_query.c.max_execution_dt
-                    ),
+            TaskInstance,
+            and_(
+                TaskInstance.dag_id == max_execution_dt_query.c.dag_id,
+                (
+                    TaskInstance.execution_date ==
+                        max_execution_dt_query.c.max_execution_dt
+                ),
                 ),
             )
             .group_by(
@@ -136,33 +138,30 @@ def get_dag_duration_info():
 def get_task_state_info():
     """Number of task instances with particular state."""
     with session_scope(Session) as session:
-        task_status_query = (
-            session.query(
-                TaskInstance.dag_id,
-                TaskInstance.task_id,
-                TaskInstance.state,
-                func.count(TaskInstance.dag_id).label("value"),
-            )
-            .group_by(
-                TaskInstance.dag_id, TaskInstance.task_id, TaskInstance.state
-            )
-            .subquery()
-        )
-        return (
-            session.query(
-                task_status_query.c.dag_id,
-                task_status_query.c.task_id,
-                task_status_query.c.state,
-                task_status_query.c.value,
-                DagModel.owners,
-            )
-            .join(DagModel, DagModel.dag_id == task_status_query.c.dag_id)
-            .filter(
-                DagModel.is_active == True,  # noqa
-                DagModel.is_paused == False,
-            )
-            .all()
-        )
+        task_status_query = session.query(
+            TaskInstance.dag_id,
+            TaskInstance.task_id,
+            TaskInstance.state,
+            func.count(TaskInstance.dag_id).label('count')
+        ).group_by(
+            TaskInstance.dag_id,
+            TaskInstance.task_id,
+            TaskInstance.state
+        ).subquery()
+
+        return session.query(
+            task_status_query.c.dag_id,
+            task_status_query.c.task_id,
+            task_status_query.c.state,
+            task_status_query.c.count,
+            DagModel.owners
+        ).join(
+            DagModel,
+            DagModel.dag_id == task_status_query.c.dag_id
+        ).filter(
+            DagModel.is_active == True,  # noqa
+            DagModel.is_paused == False,
+        ).all()
 
 
 def get_task_failure_counts():
@@ -315,6 +314,7 @@ def get_task_scheduler_delay():
             .group_by(TaskInstance.queue)
             .subquery()
         )
+
         return (
             session.query(
                 task_status_query.c.queue,
@@ -389,10 +389,12 @@ class MetricsCollector(object):
             "Count of failed tasks",
             labels=["dag_id", "task_id"],
         )
+
         for task in get_task_failure_counts():
             task_failure_count.add_metric(
                 [task.dag_id, task.task_id], task.count
             )
+
         yield task_failure_count
 
         # Dag Metrics
@@ -426,12 +428,12 @@ class MetricsCollector(object):
         )
 
         for dag in get_dag_scheduler_delay():
-            dag_scheduling_delay_value = (
-                dag.start_date - dag.execution_date
+            dag_scheduling_delay_value = (dag.start_date - dag.execution_date
             ).total_seconds()
             dag_scheduler_delay.add_metric(
                 [dag.dag_id], dag_scheduling_delay_value
             )
+
         yield dag_scheduler_delay
 
         # XCOM parameters
@@ -467,6 +469,7 @@ class MetricsCollector(object):
             task_scheduler_delay.add_metric(
                 [task.queue], task_scheduling_delay_value
             )
+
         yield task_scheduler_delay
 
         num_queued_tasks_metric = GaugeMetricFamily(
@@ -475,6 +478,7 @@ class MetricsCollector(object):
 
         num_queued_tasks = get_num_queued_tasks()
         num_queued_tasks_metric.add_metric([], num_queued_tasks)
+
         yield num_queued_tasks_metric
 
 
