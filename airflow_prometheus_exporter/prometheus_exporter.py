@@ -91,7 +91,9 @@ def get_dag_duration_info():
                 ),
                 func.min(TaskInstance.start_date).label("start_date"),
             )
-            .join(
+            .filter(
+            TaskInstance.start_date.isnot(None)
+        ).join(
             TaskInstance,
             and_(
                 TaskInstance.dag_id == max_execution_dt_query.c.dag_id,
