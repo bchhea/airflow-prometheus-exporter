@@ -285,18 +285,34 @@ class MetricsCollector(object):
 
     def collect(self):
         """Collect metrics."""
+
         # Task metrics
-        task_info = get_task_state_info()
         t_state = GaugeMetricFamily(
             'airflow_task_status',
             'Shows the number of task instances with particular status',
             labels=['dag_id', 'task_id', 'owner', 'status']
         )
-        for task in task_info:
-            t_state.add_metric(
-                [task.dag_id, task.task_id, task.owners, task.state or 'none'],
-                task.value
-            )
+
+        tasks_info_by_id = {}
+        for task in get_task_state_info():
+            task_uid = f'{task.dag_id}_{task.task_id}'
+            task_info = tasks_info_by_id.setdefault(task_uid, {
+                'meta': task,
+                'state_count': {}
+            })
+            state = task.state or 'none'
+            task_info['state_count'][state] = task.count
+
+        task_states = set(State.task_states)
+        for task_info in tasks_info_by_id.values():
+            task = task_info['meta']
+            for state in task_states:
+                state = state or 'none'
+                t_state.add_metric(
+                    [task.dag_id, task.task_id, task.owners, state],
+                    task_info['state_count'].get(state, 0)
+                )
+
         yield t_state
 
         task_duration = GaugeMetricFamily(
@@ -327,17 +343,29 @@ class MetricsCollector(object):
         yield task_failure_count
 
         # Dag Metrics
-        dag_info = get_dag_state_info()
         d_state = GaugeMetricFamily(
             'airflow_dag_status',
             'Shows the number of dag starts with this status',
             labels=['dag_id', 'owner', 'status']
         )
-        for dag in dag_info:
-            d_state.add_metric(
-                [dag.dag_id, dag.owners, dag.state],
-                dag.count
-            )
+
+        dags_info_by_id = {}
+        for dag in get_dag_state_info():
+            dag_info = dags_info_by_id.setdefault(dag.dag_id, {
+                'meta': dag,
+                'state_count': {}
+            })
+            dag_info['state_count'][dag.state] = dag.count
+
+        dag_states = set(State.dag_states)
+        for dag_info in dags_info_by_id.values():
+            dag = dag_info['meta']
+            for state in dag_states:
+                d_state.add_metric(
+                    [dag.dag_id, dag.owners, dag.state],
+                    dag_info['state_count'].get(dag.state, 0)
+                )
+
         yield d_state
 
         dag_duration = GaugeMetricFamily(
