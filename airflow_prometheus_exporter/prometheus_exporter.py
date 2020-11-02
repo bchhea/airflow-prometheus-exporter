@@ -301,14 +301,8 @@ def get_task_duration_info(state):
                     TaskInstance.execution_date ==
                     task_latest_execution_dt.c.execution_date
                 ),
-            )
-            .filter(
-                TaskInstance.state == State.SUCCESS,
-                TaskInstance.start_date.isnot(None),
-                TaskInstance.end_date.isnot(None),
-            )
-            .all()
-        )
+                )
+        ).all()
 
 
 ######################
