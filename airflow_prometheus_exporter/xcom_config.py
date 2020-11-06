@@ -1,7 +1,9 @@
 import yaml
-from pathlib import Path
+import os
 
-CONFIG_FILE = Path.cwd() / "config.yaml"
+current_path = os.path.dirname(os.path.abspath(__file__))
+
+CONFIG_FILE = f"{current_path}/config.yaml"
 
 
 def load_xcom_config():
